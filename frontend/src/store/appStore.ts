@@ -12,6 +12,8 @@ import type {
   ExcludedTable,
   AuditEntry,
   ChartSpec,
+  CsvSession,
+  CsvChart,
 } from '../types'
 import { getAuditLog } from '../api/client'
 
@@ -85,6 +87,16 @@ interface AppState {
   removeChartFromPlan: (chartTitle: string) => void
   updateChartInPlan: (chartTitle: string, updates: Partial<ChartSpec>) => void
   addChartToPlan: (chart: ChartSpec) => void
+
+  csvSession: CsvSession | null
+  csvChatHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+  csvCanvasCharts: CsvChart[]
+  setCsvSession: (s: CsvSession | null) => void
+  setCsvChatHistory: (h: Array<{ role: 'user' | 'assistant'; content: string }>) => void
+  appendCsvChatMessage: (msg: { role: 'user' | 'assistant'; content: string }) => void
+  setCsvCanvasCharts: (charts: CsvChart[]) => void
+  addCsvCanvasChart: (chart: CsvChart) => void
+  removeCsvCanvasChart: (id: string) => void
 }
 
 const DEFAULT_DB_CONFIG: DbConfig = {
@@ -199,6 +211,19 @@ export const useAppStore = create<AppState>()(
             ? { ...s.editedPlan, charts: [...s.editedPlan.charts, chart] }
             : null,
         })),
+
+      csvSession: null,
+      csvChatHistory: [],
+      csvCanvasCharts: [],
+      setCsvSession: (s) => set({ csvSession: s }),
+      setCsvChatHistory: (h) => set({ csvChatHistory: h }),
+      appendCsvChatMessage: (msg) =>
+        set((s) => ({ csvChatHistory: [...s.csvChatHistory, msg] })),
+      setCsvCanvasCharts: (charts) => set({ csvCanvasCharts: charts }),
+      addCsvCanvasChart: (chart) =>
+        set((s) => ({ csvCanvasCharts: [...s.csvCanvasCharts, chart] })),
+      removeCsvCanvasChart: (id) =>
+        set((s) => ({ csvCanvasCharts: s.csvCanvasCharts.filter((c) => c.id !== id) })),
     }),
     {
       name: 'superset-dashboard-builder',

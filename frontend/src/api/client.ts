@@ -1,4 +1,4 @@
-import type { TableProfile, AuditLog, ChartPreviewData, DashboardPlan } from '../types'
+import type { TableProfile, AuditLog, ChartPreviewData, DashboardPlan, CsvSession, CsvQueryResult, CsvChart } from '../types'
 
 const BASE = '/api'
 
@@ -169,4 +169,62 @@ export async function getAuditLog(sessionId: string): Promise<AuditLog> {
 
 export async function clearAuditLog(sessionId: string): Promise<void> {
   return request('DELETE', `/sessions/${sessionId}/audit`)
+}
+
+export async function uploadCsvFile(sessionId: string, file: File): Promise<CsvSession> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${BASE}/sessions/${sessionId}/csv/upload`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const data = await res.json()
+      detail = data.detail || detail
+    } catch { /* ignore */ }
+    throw new ApiError(detail, res.status)
+  }
+  return res.json()
+}
+
+export async function queryCsv(
+  sessionId: string,
+  question: string,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<CsvQueryResult> {
+  return request('POST', `/sessions/${sessionId}/csv/query`, { question, history })
+}
+
+export async function addCsvChart(sessionId: string, chart: CsvChart): Promise<{ ok: boolean }> {
+  return request('POST', `/sessions/${sessionId}/csv/add-chart`, chart)
+}
+
+export async function removeCsvChart(sessionId: string, chartId: string): Promise<{ ok: boolean }> {
+  return request('DELETE', `/sessions/${sessionId}/csv/charts/${chartId}`)
+}
+
+export async function exportCsvPdf(sessionId: string): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}/csv/export/pdf`, { method: 'POST' })
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'dashboard.pdf'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function exportCsvExcel(sessionId: string): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}/csv/export/excel`, { method: 'POST' })
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'dashboard.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
 }

@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 
 from config import config
@@ -94,6 +94,7 @@ def new_session() -> dict:
             "dashboard_url": None,
         },
         "audit_log": [],
+        "csv_session": None,
     }
 
 
@@ -184,6 +185,23 @@ class AddTableBody(BaseModel):
 
 class ConfirmPhase2Body(BaseModel):
     edited_sql: str
+
+
+class CsvQueryBody(BaseModel):
+    question: str
+    history: list[dict] = []
+
+
+class CsvChartBody(BaseModel):
+    id: str
+    title: str
+    chart_type: str
+    columns: list[str]
+    rows: list[dict]
+    x_col: str
+    y_col: str
+    question: str
+    added_at: str
 
 
 # ── Session endpoints ─────────────────────────────────────────────────────────
@@ -1189,6 +1207,272 @@ async def update_plan(sid: str, body: UpdatePlanBody):
     plan_dict.setdefault("position_json", {})
     sess["phase3"]["dashboard_plan"] = DashboardPlan(**plan_dict)
     return {"ok": True}
+
+
+# ── CSV analysis endpoints ────────────────────────────────────────────────────
+
+_CSV_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+_CSV_CHART_ROW_LIMIT = 100
+
+
+@app.post("/api/sessions/{sid}/csv/upload")
+async def csv_upload(sid: str, file: UploadFile = File(...)):
+    sess = get_session(sid)
+    filename = file.filename or "upload"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("csv", "xlsx", "xls"):
+        raise HTTPException(status_code=400, detail="Only .csv / .xlsx / .xls files are supported")
+    content = await file.read()
+    if len(content) > _CSV_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="File exceeds 50 MB limit")
+    try:
+        import io
+        import pandas as pd
+
+        if ext == "csv":
+            df = pd.read_csv(io.BytesIO(content))
+        else:
+            df = pd.read_excel(io.BytesIO(content))
+
+        columns = []
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            sample = [str(v) for v in df[col].dropna().head(5).tolist()]
+            columns.append({"name": col, "dtype": dtype, "sample": sample})
+
+        sess["csv_session"] = {
+            "filename": filename,
+            "row_count": len(df),
+            "columns": columns,
+            "df_json": df.to_json(orient="records"),
+            "charts": [],
+        }
+        return {
+            "filename": filename,
+            "row_count": len(df),
+            "columns": columns,
+            "charts": [],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse file: {e}")
+
+
+@app.post("/api/sessions/{sid}/csv/query")
+async def csv_query(sid: str, body: CsvQueryBody):
+    sess = get_session(sid)
+    csv_sess = sess.get("csv_session")
+    if not csv_sess:
+        raise HTTPException(status_code=400, detail="No CSV loaded. Upload a file first.")
+    if sess.get("llm_model"):
+        config.LLM_MODEL = sess["llm_model"]
+    try:
+        import duckdb
+        import pandas as pd
+        import io
+        from tools.llm_client import chat
+
+        df = pd.read_json(io.StringIO(csv_sess["df_json"]))
+        columns_desc = ", ".join(
+            f"{c['name']} ({c['dtype']})" for c in csv_sess["columns"]
+        )
+        history_text = ""
+        for turn in body.history[-6:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            history_text += f"\n{role.upper()}: {content}"
+
+        system = (
+            "You are a data analyst. Given a DuckDB table named `df` with these columns:\n"
+            f"{columns_desc}\n\n"
+            "Return a JSON object with exactly these keys:\n"
+            '{"sql": "<SELECT query on df>", "chart_type": "<bar|line|pie|table|big_number>"}\n'
+            "Rules:\n"
+            "- Always query the table named `df`\n"
+            "- chart_type=big_number when the result is a single aggregate value\n"
+            "- chart_type=pie for proportions with ≤10 categories\n"
+            "- chart_type=line for time-series data\n"
+            "- chart_type=bar for categorical comparisons\n"
+            "- chart_type=table when the user wants raw rows\n"
+            "- Limit results to 100 rows unless user asks for more\n"
+            "- Return ONLY the JSON, no markdown fences"
+        )
+        user_prompt = f"Previous conversation:{history_text}\n\nNew question: {body.question}"
+
+        raw = chat(system=system, user=user_prompt, temperature=0)
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = json.loads(raw)
+        sql = parsed["sql"].strip()
+        chart_type = parsed.get("chart_type", "table")
+
+        con = duckdb.connect()
+        con.register("df", df)
+        result = con.execute(sql).fetchdf()
+        con.close()
+
+        rows = result.head(_CSV_CHART_ROW_LIMIT).to_dict(orient="records")
+        return {
+            "question": body.question,
+            "sql": sql,
+            "columns": list(result.columns),
+            "rows": rows,
+            "row_count": len(result),
+            "chart_type": chart_type,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "question": body.question,
+            "sql": "",
+            "columns": [],
+            "rows": [],
+            "row_count": 0,
+            "chart_type": "table",
+            "error": str(e),
+        }
+
+
+@app.post("/api/sessions/{sid}/csv/add-chart")
+async def csv_add_chart(sid: str, body: CsvChartBody):
+    sess = get_session(sid)
+    csv_sess = sess.get("csv_session")
+    if not csv_sess:
+        raise HTTPException(status_code=400, detail="No CSV session")
+    chart = body.model_dump()
+    # Deduplicate by id
+    csv_sess["charts"] = [c for c in csv_sess["charts"] if c["id"] != chart["id"]]
+    csv_sess["charts"].append(chart)
+    return {"ok": True}
+
+
+@app.delete("/api/sessions/{sid}/csv/charts/{chart_id}")
+async def csv_remove_chart(sid: str, chart_id: str):
+    sess = get_session(sid)
+    csv_sess = sess.get("csv_session")
+    if not csv_sess:
+        raise HTTPException(status_code=400, detail="No CSV session")
+    csv_sess["charts"] = [c for c in csv_sess["charts"] if c["id"] != chart_id]
+    return {"ok": True}
+
+
+@app.get("/api/sessions/{sid}/csv/charts")
+async def csv_get_charts(sid: str):
+    sess = get_session(sid)
+    csv_sess = sess.get("csv_session")
+    if not csv_sess:
+        return {"charts": []}
+    return {"charts": csv_sess.get("charts", [])}
+
+
+@app.post("/api/sessions/{sid}/csv/export/pdf")
+async def csv_export_pdf(sid: str):
+    sess = get_session(sid)
+    csv_sess = sess.get("csv_session")
+    if not csv_sess:
+        raise HTTPException(status_code=400, detail="No CSV session")
+    try:
+        from weasyprint import HTML
+
+        charts = csv_sess.get("charts", [])
+        filename = csv_sess.get("filename", "data")
+
+        def _table_html(chart: dict) -> str:
+            cols = chart.get("columns", [])
+            rows = chart.get("rows", [])
+            header = "".join(f"<th>{c}</th>" for c in cols)
+            body_rows = ""
+            for row in rows[:50]:
+                cells = "".join(f"<td>{row.get(c, '')}</td>" for c in cols)
+                body_rows += f"<tr>{cells}</tr>"
+            return f"<table><thead><tr>{header}</tr></thead><tbody>{body_rows}</tbody></table>"
+
+        cards = ""
+        for chart in charts:
+            cards += (
+                f'<div class="chart-card">'
+                f'<h3>{chart.get("title", "Chart")}</h3>'
+                f'<p class="meta">Type: {chart.get("chart_type")} · '
+                f'Question: {chart.get("question", "")}</p>'
+                f'{_table_html(chart)}'
+                f'</div>'
+            )
+
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+body {{ font-family: sans-serif; margin: 20px; color: #111; }}
+h1 {{ font-size: 1.4em; border-bottom: 2px solid #6366f1; padding-bottom: 8px; }}
+.chart-card {{ margin-bottom: 24px; page-break-inside: avoid; }}
+h3 {{ font-size: 1em; margin: 0 0 4px; }}
+.meta {{ font-size: 0.75em; color: #555; margin: 0 0 8px; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 0.8em; }}
+th {{ background: #f0f0f0; border: 1px solid #ddd; padding: 4px 8px; text-align: left; }}
+td {{ border: 1px solid #ddd; padding: 4px 8px; }}
+tr:nth-child(even) {{ background: #f9f9f9; }}
+</style></head>
+<body>
+<h1>Dashboard Export — {filename}</h1>
+{cards}
+</body></html>"""
+
+        pdf_bytes = HTML(string=html).write_pdf()
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="dashboard.pdf"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
+
+@app.post("/api/sessions/{sid}/csv/export/excel")
+async def csv_export_excel(sid: str):
+    sess = get_session(sid)
+    csv_sess = sess.get("csv_session")
+    if not csv_sess:
+        raise HTTPException(status_code=400, detail="No CSV session")
+    try:
+        import io as _io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+
+        charts = csv_sess.get("charts", [])
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)  # remove default sheet
+
+        def _safe_sheet_name(name: str) -> str:
+            for ch in r'\/?*[]:"':
+                name = name.replace(ch, "_")
+            return name[:31]
+
+        for chart in charts:
+            title = chart.get("title", "Chart")
+            ws = wb.create_sheet(title=_safe_sheet_name(title))
+            cols = chart.get("columns", [])
+            rows = chart.get("rows", [])
+            # Header row
+            for ci, col in enumerate(cols, start=1):
+                cell = ws.cell(row=1, column=ci, value=col)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill("solid", fgColor="6366F1")
+                cell.font = Font(bold=True, color="FFFFFF")
+            for ri, row in enumerate(rows, start=2):
+                for ci, col in enumerate(cols, start=1):
+                    ws.cell(row=ri, column=ci, value=row.get(col, ""))
+
+        buf = _io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="dashboard.xlsx"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Excel generation failed: {e}")
 
 
 # ── Audit log endpoints ───────────────────────────────────────────────────────

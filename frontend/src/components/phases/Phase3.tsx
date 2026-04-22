@@ -10,6 +10,7 @@ import {
   Hammer,
   Plus,
   ArrowRight,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
@@ -22,7 +23,15 @@ import { Card } from '../ui/Card'
 import { Badge } from '../ui/Badge'
 import { ProgressLog } from '../ui/ProgressLog'
 import ChartPreviewCard from '../ui/ChartPreviewCard'
+import { CsvAnalysis } from './CsvAnalysis'
 import type { DashboardPlan, QAReport, DatasetInfo, ChartSpec } from '../../types'
+
+type Mode = 'prompt' | 'csv'
+
+const MODES: { id: Mode; label: string; icon: React.ReactNode }[] = [
+  { id: 'prompt', label: 'Dashboard builder', icon: <Layout size={14} /> },
+  { id: 'csv', label: 'Analyse CSV / Excel', icon: <FileSpreadsheet size={14} /> },
+]
 
 const VIZ_ICONS: Record<string, string> = {
   big_number_total: '🔢',
@@ -316,6 +325,8 @@ export function Phase3() {
     addChartToPlan,
   } = useAppStore()
 
+  const [mode, setMode] = useState<Mode>('prompt')
+
   const planSSE = useSSE()
   const buildSSE = useSSE()
 
@@ -439,6 +450,33 @@ export function Phase3() {
           Plan, review, and build your Superset dashboard from a dataset.
         </p>
       </div>
+
+      {/* Mode selector */}
+      <div className="flex gap-1 p-1 rounded-lg bg-surface border border-border w-fit">
+        {MODES.map(({ id, label, icon }) => (
+          <button
+            key={id}
+            onClick={() => setMode(id)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              mode === id
+                ? 'bg-card text-text shadow-sm border border-border'
+                : 'text-text-muted hover:text-text'
+            }`}
+          >
+            {icon}
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* CSV mode */}
+      {mode === 'csv' && sessionId && (
+        <CsvAnalysis sessionId={sessionId} />
+      )}
+
+      {/* Dashboard builder mode */}
+      {mode === 'prompt' && (
+      <>
 
       {/* Step indicator */}
       <StepIndicator step={phase3Step} />
@@ -770,6 +808,8 @@ export function Phase3() {
           </motion.div>
         )}
       </AnimatePresence>
+      </>
+      )}
     </div>
   )
 }

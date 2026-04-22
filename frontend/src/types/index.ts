@@ -145,3 +145,38 @@ export interface ChartPreviewData {
   total?: number | null
   error?: string | null
 }
+
+export interface CsvColumn {
+  name: string
+  dtype: string
+  sample: string[]
+}
+
+export interface CsvQueryResult {
+  question: string
+  sql: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  row_count: number
+  chart_type: 'bar' | 'line' | 'pie' | 'table' | 'big_number'
+  error: string | null
+}
+
+export interface CsvChart {
+  id: string
+  title: string
+  chart_type: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  x_col: string
+  y_col: string
+  question: string
+  added_at: string
+}
+
+export interface CsvSession {
+  filename: string
+  row_count: number
+  columns: CsvColumn[]
+  charts: CsvChart[]
+}
