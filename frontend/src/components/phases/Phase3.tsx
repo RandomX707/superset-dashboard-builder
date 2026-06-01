@@ -11,18 +11,23 @@ import {
   Plus,
   ArrowRight,
   FileSpreadsheet,
+  ShieldCheck,
+  History,
+  Sparkles,
 } from 'lucide-react'
+import { clsx } from 'clsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { useAppStore } from '../../store/appStore'
 import { useSSE } from '../../hooks/useSSE'
-import { updateConfig, updatePlan } from '../../api/client'
+import { updateConfig, updatePlan, getDataQualityReport, exportDQReportPdf, generateChartDescriptions } from '../../api/client'
 import { Button } from '../ui/Button'
 import { Input, Textarea } from '../ui/Input'
-import { Card } from '../ui/Card'
+import { Zone, SectionHeader } from '../ui/Card'
 import { Badge } from '../ui/Badge'
 import { ProgressLog } from '../ui/ProgressLog'
 import ChartPreviewCard from '../ui/ChartPreviewCard'
+import DataQualityReportPanel from '../ui/DataQualityReport'
 import { CsvAnalysis } from './CsvAnalysis'
 import type { DashboardPlan, QAReport, DatasetInfo, ChartSpec } from '../../types'
 
@@ -73,13 +78,14 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
         <div key={n} className="flex items-center">
           <div className="flex items-center gap-1.5">
             <div
-              className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+              className={clsx(
+                'h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors',
                 step === n
-                  ? 'bg-accent text-white'
+                  ? 'bg-accent text-[#0e0d0a]'
                   : step > n
-                  ? 'bg-success text-white'
+                  ? 'bg-success text-[#0e0d0a]'
                   : 'bg-surface text-text-muted border border-border'
-              }`}
+              )}
             >
               {step > n ? '✓' : n}
             </div>
@@ -92,7 +98,7 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
             </span>
           </div>
           {i < steps.length - 1 && (
-            <div className={`mx-2 h-px w-8 transition-colors ${step > n ? 'bg-success' : 'bg-border'}`} />
+            <span className={clsx('step-line', step > n ? 'step-line-done' : '')} />
           )}
         </div>
       ))}
@@ -107,7 +113,7 @@ interface PlanTableProps {
 function PlanTable({ plan }: PlanTableProps) {
   return (
     <div className="space-y-4">
-      <Card title={`Charts (${plan.charts.length})`}>
+      <Zone label={`Charts (${plan.charts.length})`}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -162,10 +168,10 @@ function PlanTable({ plan }: PlanTableProps) {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Zone>
 
       {plan.filters.length > 0 && (
-        <Card title={`Filters (${plan.filters.length})`}>
+        <Zone label={`Filters (${plan.filters.length})`}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -198,7 +204,7 @@ function PlanTable({ plan }: PlanTableProps) {
               </tbody>
             </table>
           </div>
-        </Card>
+        </Zone>
       )}
     </div>
   )
@@ -323,6 +329,17 @@ export function Phase3() {
     removeChartFromPlan,
     updateChartInPlan,
     addChartToPlan,
+    dqReport,
+    dqLoading,
+    setDqReport,
+    setDqLoading,
+    setVersionPanelOpen,
+    loadDashboardHistory,
+    descriptionGeneration,
+    setDescriptionGenerationLoading,
+    setDescriptionGenerationResults,
+    setDescriptionGenerationDone,
+    resetDescriptionGeneration,
   } = useAppStore()
 
   const [mode, setMode] = useState<Mode>('prompt')
@@ -333,6 +350,7 @@ export function Phase3() {
   const [datasetName, setDatasetName] = useState(
     phase3.datasetName || phase2.queryPlan?.dataset_name_suggestion || ''
   )
+  useEffect(() => { setDqReport(null) }, [datasetName])
   const [dashboardTitle, setDashboardTitle] = useState(phase3.dashboardTitle || '')
 
   const suggestedDatasetName = phase2.queryPlan?.dataset_name_suggestion ?? ''
@@ -371,12 +389,16 @@ export function Phase3() {
   useEffect(() => {
     if (buildSSE.isDone && buildSSE.result) {
       const data = buildSSE.result as {
+        dashboard_id?: number
         dashboard_url: string | null
         qa_report: QAReport | null
+        chart_ids?: number[]
       }
       setPhase3({
+        dashboardId: data.dashboard_id ?? null,
         dashboardUrl: data.dashboard_url ?? null,
         qaReport: data.qa_report ?? null,
+        chartIds: data.chart_ids ?? [],
       })
       if (data.dashboard_url) {
         toast.success('Dashboard built successfully!')
@@ -393,7 +415,16 @@ export function Phase3() {
       llm_model: llmModel,
     }).catch(() => {/* silent */})
     planSSE.reset()
-    setPhase3({ planReady: false, dashboardPlan: null, dashboardUrl: null, datasetInfo: null })
+    resetDescriptionGeneration()
+    setPhase3({
+      planReady: false,
+      dashboardPlan: null,
+      dashboardUrl: null,
+      dashboardId: null,
+      datasetInfo: null,
+      chartIds: [],
+      qaReport: null,
+    })
     setEditedPlan(null)
     setPhase3Step(1)
     const qs = new URLSearchParams({
@@ -431,7 +462,8 @@ export function Phase3() {
       llm_model: llmModel,
     }).catch(() => {/* silent */})
     buildSSE.reset()
-    setPhase3({ dashboardUrl: null, qaReport: null })
+    resetDescriptionGeneration()
+    setPhase3({ dashboardUrl: null, dashboardId: null, qaReport: null, chartIds: [] })
     const qs = new URLSearchParams()
     if (dashboardId) qs.set('dashboard_id', dashboardId)
     qs.set('dry_run', String(dryRun))
@@ -441,15 +473,75 @@ export function Phase3() {
     )
   }
 
+  async function handleGenerateDescriptions() {
+    const planForDescriptions = editedPlan ?? dashboardPlan
+    if (!sessionId || !planForDescriptions || phase3.chartIds.length === 0) return
+
+    setDescriptionGenerationLoading(true)
+    setDescriptionGenerationDone(false)
+    try {
+      const response = await generateChartDescriptions(sessionId, {
+        chart_ids: phase3.chartIds,
+        chart_specs: planForDescriptions.charts.map((spec, index) => ({
+          id: phase3.chartIds[index] ?? 0,
+          title: spec.title,
+          viz_type: spec.viz_type,
+          metrics: spec.metrics,
+          groupby: spec.groupby,
+          time_column: spec.time_column ?? null,
+          time_grain: spec.time_grain ?? null,
+        })),
+        dataset_name: datasetName,
+        dashboard_title: dashboardTitle || planForDescriptions.dashboard_title,
+      })
+
+      setDescriptionGenerationResults(response.results)
+      if (response.error) {
+        toast.error(response.error)
+        setDescriptionGenerationDone(false)
+      } else {
+        setDescriptionGenerationDone(true)
+        toast.success(`${response.succeeded} chart descriptions added`)
+      }
+    } catch (e) {
+      toast.error('Description generation failed: ' + String(e))
+    } finally {
+      setDescriptionGenerationLoading(false)
+    }
+  }
+
+  async function handleRunDQ() {
+    if (!sessionId || !datasetName.trim()) return
+    setDqReport(null)
+    setDqLoading(true)
+    try {
+      const report = await getDataQualityReport(sessionId, datasetName.trim())
+      setDqReport(report)
+      if (report.error) toast.error('DQ check failed: ' + report.error)
+    } catch (e) {
+      toast.error('Data quality check failed: ' + String(e))
+    } finally {
+      setDqLoading(false)
+    }
+  }
+
+  async function handleExportDQPdf() {
+    if (!sessionId || !dqReport) return
+    try {
+      await exportDQReportPdf(sessionId, dqReport)
+    } catch (e) {
+      toast.error('PDF export failed: ' + String(e))
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6 max-w-5xl w-full mx-auto">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-text">Dashboard Builder</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Plan, review, and build your Superset dashboard from a dataset.
-        </p>
-      </div>
+      <SectionHeader
+        eyebrow="Phase 3"
+        title="Dashboard Builder"
+        subtitle="Plan, review, and build your Superset dashboard from a dataset."
+      />
 
       {/* Mode selector */}
       <div className="flex gap-1 p-1 rounded-lg bg-surface border border-border w-fit">
@@ -484,7 +576,7 @@ export function Phase3() {
       {/* ── Step 1: Plan ─────────────────────────────────────────────────── */}
       {(phase3Step === 1 || phase3Step === 2) && (
         <div className={phase3Step === 2 ? 'opacity-60 pointer-events-none select-none' : ''}>
-          <Card>
+          <Zone label="Configuration">
             <div className="p-4 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <Input
@@ -538,7 +630,7 @@ export function Phase3() {
                   <span className="text-sm text-text-muted">Dry Run</span>
                 </label>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <Button
                   variant="primary"
                   icon={<Layout size={15} />}
@@ -548,6 +640,15 @@ export function Phase3() {
                 >
                   {planSSE.isStreaming ? 'Planning...' : 'Plan Dashboard'}
                 </Button>
+                <Button
+                  variant="secondary"
+                  icon={<ShieldCheck size={14} />}
+                  loading={dqLoading}
+                  disabled={!datasetName.trim() || dqLoading}
+                  onClick={handleRunDQ}
+                >
+                  {dqLoading ? 'Checking...' : 'Data Quality Check'}
+                </Button>
                 {phase3Step === 2 && (
                   <Button variant="secondary" icon={<Play size={14} />} onClick={() => setPhase3Step(1)}>
                     Back to plan
@@ -555,7 +656,26 @@ export function Phase3() {
                 )}
               </div>
             </div>
-          </Card>
+          </Zone>
+
+          {/* DQ Report */}
+          <AnimatePresence>
+            {dqReport && (
+              <motion.div
+                key="dq-report"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="mt-4"
+              >
+                <DataQualityReportPanel
+                  report={dqReport}
+                  onClose={() => setDqReport(null)}
+                  onExportPdf={handleExportDQPdf}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Plan progress */}
           {phase3Step === 1 && (
@@ -754,9 +874,92 @@ export function Phase3() {
                       </Button>
                     </a>
                   </div>
+                  {phase3.dashboardId && (
+                    <button
+                      onClick={() => {
+                        setVersionPanelOpen(true)
+                        void loadDashboardHistory(phase3.dashboardId as number)
+                      }}
+                      className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-accent transition-colors"
+                    >
+                      <History size={14} />
+                      View version history
+                    </button>
+                  )}
+
+                  {phase3.chartIds.length > 0 && (
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-text">Chart descriptions</p>
+                          <p className="mt-0.5 text-xs text-text-muted">
+                            Add plain-English descriptions to every chart so stakeholders understand them without explanation.
+                          </p>
+                        </div>
+                        {!descriptionGeneration.done ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<Sparkles size={13} />}
+                            loading={descriptionGeneration.loading}
+                            onClick={handleGenerateDescriptions}
+                            disabled={descriptionGeneration.loading}
+                            className="shrink-0"
+                          >
+                            {descriptionGeneration.loading ? 'Generating...' : 'Generate descriptions'}
+                          </Button>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
+                            <CheckCircle2 size={14} />
+                            {descriptionGeneration.results.filter((result) => result.ok).length} descriptions added
+                          </div>
+                        )}
+                      </div>
+
+                      {descriptionGeneration.results.length > 0 && (
+                        <div className="mt-3 space-y-1.5">
+                          {descriptionGeneration.results.map((result) => (
+                            <div
+                              key={result.id}
+                              className={clsx(
+                                'flex items-start gap-2 rounded-lg px-3 py-2 text-xs',
+                                result.ok ? 'bg-surface' : 'bg-error/10'
+                              )}
+                            >
+                              {result.ok ? (
+                                <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-success" />
+                              ) : (
+                                <XCircle size={13} className="mt-0.5 shrink-0 text-error" />
+                              )}
+                              <div className="min-w-0">
+                                <p className="font-medium text-text">{result.title}</p>
+                                {result.ok ? (
+                                  <p className="mt-0.5 italic text-text-muted">"{result.description}"</p>
+                                ) : (
+                                  <p className="mt-0.5 text-error">Failed: {result.error ?? 'Unknown error'}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+
+                          {descriptionGeneration.results.some((result) => !result.ok) && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={handleGenerateDescriptions}
+                              loading={descriptionGeneration.loading}
+                              className="mt-2"
+                            >
+                              Retry {descriptionGeneration.results.filter((result) => !result.ok).length} failed
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {qaReport && (
-                    <Card title="QA Report">
+                    <Zone label="QA Report">
                       <div className="p-4 space-y-3">
                         <div className="flex items-center gap-2">
                           {qaReport.passed ? (
@@ -796,7 +999,7 @@ export function Phase3() {
                           </div>
                         )}
                       </div>
-                    </Card>
+                    </Zone>
                   )}
 
                   <Button variant="secondary" icon={<Play size={14} />} onClick={handlePlan}>

@@ -22,8 +22,8 @@ export function Header() {
   const phase3DirectAccess = activePhase === 3 && !(phase1.confirmed && phase2.confirmed)
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-6">
-<nav className="flex items-center gap-1">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-6">
+      <nav className="flex items-center gap-1">
         {STEPS.map((step, idx) => {
           const isActive = activePhase === step.phase
           const isCompleted =
@@ -51,9 +51,9 @@ export function Header() {
                   className={clsx(
                     'flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold',
                     isActive
-                      ? 'bg-accent text-white'
+                      ? 'bg-accent text-[#0e0d0a]'
                       : isCompleted
-                      ? 'bg-success text-white'
+                      ? 'bg-success text-[#0e0d0a]'
                       : 'bg-border text-text-muted'
                   )}
                 >
@@ -74,7 +74,14 @@ export function Header() {
               </button>
 
               {idx < STEPS.length - 1 && (
-                <span className="text-text-dim select-none px-0.5">›</span>
+                <span
+                  className={clsx(
+                    'step-line',
+                    (idx === 0 && phase1.confirmed) || (idx === 1 && phase2.confirmed)
+                      ? 'step-line-done'
+                      : ''
+                  )}
+                />
               )}
             </div>
           )

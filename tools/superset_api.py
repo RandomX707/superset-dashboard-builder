@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.parse
 import uuid
 
 import httpx
 
 from models.schemas import ChartSpec, DatasetColumn, DatasetInfo, FilterSpec
+
+logger = logging.getLogger(__name__)
 
 # Map spec viz_type names to Superset 5.x internal names
 VIZ_TYPE_MAP = {
@@ -259,7 +262,7 @@ class SupersetClient:
                         self.superset_version = (int(major.group(1)), 0, 0)
         except Exception:
             pass
-        print(f"DEBUG version={self.superset_version} is_v6={self.is_v6_or_later}")
+        logger.debug("Superset version=%s is_v6=%s", self.superset_version, self.is_v6_or_later)
 
     @property
     def is_v6_or_later(self) -> bool:
@@ -503,8 +506,7 @@ class SupersetClient:
     ) -> None:
         ids = [int(c) for c in chart_ids]
 
-        print(f"DEBUG is_v6_or_later={self.is_v6_or_later}")
-        print(f"DEBUG superset_version={self.superset_version}")
+        logger.debug("Superset version=%s is_v6=%s", self.superset_version, self.is_v6_or_later)
 
         # Strategy 1: dedicated /charts endpoint
         try:
@@ -513,10 +515,10 @@ class SupersetClient:
                 f"/api/v1/dashboard/{dashboard_id}/charts",
                 json={"chart_ids": ids},
             )
-            print("DEBUG /charts endpoint succeeded")
+            logger.debug("Dashboard charts endpoint succeeded")
             return
         except Exception as exc:
-            print(f"DEBUG /charts endpoint failed: {exc}")
+            logger.debug("Dashboard charts endpoint failed: %s", exc)
 
         # Strategy 2: update each chart's dashboards list individually
         # Works on both 5.x and 6.x — no "slices" field used
@@ -539,7 +541,7 @@ class SupersetClient:
                             json={"dashboards": current_dash_ids},
                         )
             except Exception as exc:
-                print(f"DEBUG chart {chart_id} link failed: {exc}")
+                logger.debug("Chart %s dashboard link failed: %s", chart_id, exc)
 
     def update_dashboard(
         self,
@@ -563,6 +565,93 @@ class SupersetClient:
     def get_dashboard(self, dashboard_id: int) -> dict:
         resp = self._request("GET", f"/api/v1/dashboard/{dashboard_id}")
         return resp.json()["result"]
+
+    def get_dashboard_full_state(self, dashboard_id: int) -> dict:
+        """Fetch complete dashboard state from Superset for snapshots."""
+        try:
+            import json as _json
+
+            resp = self._request("GET", f"/api/v1/dashboard/{dashboard_id}")
+            result = resp.json().get("result", {})
+
+            pos = result.get("position_json", "{}")
+            if isinstance(pos, str):
+                try:
+                    pos = _json.loads(pos)
+                except Exception:
+                    pos = {}
+
+            metadata = result.get("json_metadata", {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = _json.loads(metadata) if metadata else {}
+                except Exception:
+                    metadata = {}
+
+            slices = []
+            for s in result.get("slices", []):
+                params = s.get("params", {})
+                if isinstance(params, str):
+                    try:
+                        params = _json.loads(params) if params else {}
+                    except Exception:
+                        params = {}
+                slices.append(
+                    {
+                        "id": s.get("slice_id") or s.get("id"),
+                        "title": s.get("slice_name") or s.get("title", ""),
+                        "viz_type": s.get("viz_type", ""),
+                        "datasource_id": s.get("datasource_id"),
+                        "params": params,
+                    }
+                )
+
+            return {
+                "dashboard_id": dashboard_id,
+                "title": result.get("dashboard_title", ""),
+                "url": result.get("url", ""),
+                "position_json": pos if isinstance(pos, dict) else {},
+                "slices": slices,
+                "json_metadata": metadata if isinstance(metadata, dict) else {},
+            }
+        except Exception:
+            return {}
+
+    def restore_dashboard_version(self, dashboard_id: int, snapshot: dict) -> bool:
+        """Restore a dashboard by re-applying its saved layout and chart links."""
+        try:
+            import json as _json
+
+            body = {
+                "dashboard_title": snapshot["dashboard_title"],
+                "position_json": _json.dumps(snapshot["position_json"]),
+            }
+            self._request("PUT", f"/api/v1/dashboard/{dashboard_id}", json=body)
+
+            chart_ids = []
+            for chart in snapshot.get("charts", []):
+                chart_id = chart.get("id")
+                if not chart_id:
+                    continue
+                chart_ids.append(chart_id)
+                payload = {
+                    "slice_name": chart.get("title", ""),
+                    "viz_type": chart.get("viz_type", ""),
+                    "params": _json.dumps(chart.get("params", {})),
+                }
+                if chart.get("dataset_id"):
+                    payload["datasource_id"] = chart["dataset_id"]
+                    payload["datasource_type"] = "table"
+                try:
+                    self._request("PUT", f"/api/v1/chart/{chart_id}", json=payload)
+                except Exception:
+                    continue
+
+            if chart_ids:
+                self._add_charts_to_dashboard(dashboard_id, chart_ids)
+            return True
+        except Exception:
+            return False
 
     def set_dashboard_filters(
         self,
@@ -622,3 +711,38 @@ class SupersetClient:
             f"/api/v1/dashboard/{dashboard_id}",
             json={"json_metadata": metadata},
         )
+
+    def get_dataset_database_id(self, dataset_id: int) -> int | None:
+        try:
+            resp = self._request("GET", f"/api/v1/dataset/{dataset_id}")
+            result = resp.json().get("result", {})
+            db = result.get("database", {})
+            return db.get("id")
+        except Exception:
+            return None
+
+    def execute_sql(self, database_id: int, sql: str, limit: int = 1000) -> tuple[bool, list[dict], str]:
+        try:
+            import uuid as _uuid
+            payload = {
+                "database_id": database_id,
+                "sql": sql,
+                "runAsync": False,
+                "select_as_cta": False,
+                "tmp_table_name": "",
+                "client_id": str(_uuid.uuid4())[:8],
+                "queryLimit": limit,
+            }
+            resp = self._request("POST", "/api/v1/sqllab/execute/", json=payload)
+            data = resp.json()
+            columns = [c["name"] for c in data.get("columns", [])]
+            rows_raw = data.get("data", [])
+            rows = [
+                row
+                if isinstance(row, dict)
+                else dict(zip(columns, row))
+                for row in rows_raw
+            ]
+            return True, rows, ""
+        except Exception as e:
+            return False, [], str(e)

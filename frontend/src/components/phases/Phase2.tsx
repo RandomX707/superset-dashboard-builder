@@ -19,7 +19,7 @@ import { useAppStore } from '../../store/appStore'
 import { useSSE } from '../../hooks/useSSE'
 import { confirmPhase2 } from '../../api/client'
 import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
+import { Zone, SectionHeader } from '../ui/Card'
 import { Badge } from '../ui/Badge'
 import { ProgressLog } from '../ui/ProgressLog'
 import { DataTable } from '../ui/DataTable'
@@ -120,15 +120,14 @@ export function Phase2() {
   return (
     <div className="flex flex-col gap-6 p-6 max-w-4xl w-full mx-auto">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-text">Query Builder</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Generate a master JOIN SQL query from your schema.
-        </p>
-      </div>
+      <SectionHeader
+        eyebrow="Phase 2"
+        title="Query Builder"
+        subtitle="Generate a master JOIN SQL query from your schema."
+      />
 
       {/* Generate button */}
-      <Card>
+      <Zone label="Generate">
         <div className="p-4 flex items-center gap-3">
           <Button
             variant="primary"
@@ -148,7 +147,7 @@ export function Phase2() {
             </Button>
           )}
         </div>
-      </Card>
+      </Zone>
 
       {/* Progress */}
       <ProgressLog
@@ -221,28 +220,22 @@ export function Phase2() {
             )}
 
             {/* Agent reasoning */}
-            <Card>
-              <button
-                className="flex w-full items-center justify-between px-4 py-3"
-                onClick={() => setShowReasoning((o) => !o)}
-              >
-                <span className="text-sm font-semibold text-text">
-                  Agent Reasoning
-                </span>
-                {showReasoning ? (
-                  <ChevronDown size={14} className="text-text-muted" />
-                ) : (
-                  <ChevronRight size={14} className="text-text-muted" />
-                )}
-              </button>
+            <Zone
+              label="Agent Reasoning"
+              headerRight={
+                <button onClick={() => setShowReasoning((o) => !o)} className="text-text-dim hover:text-text-muted transition-colors">
+                  {showReasoning ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                </button>
+              }
+            >
               {showReasoning && (
-                <div className="border-t border-border px-4 py-3">
+                <div className="px-4 py-3">
                   <p className="text-sm text-text-muted leading-relaxed">
                     {qp.agent_reasoning}
                   </p>
                 </div>
               )}
-            </Card>
+            </Zone>
 
             {/* Grain */}
             {qp.grain_description && (
@@ -256,8 +249,8 @@ export function Phase2() {
             )}
 
             {/* SQL Editor */}
-            <Card title="SQL Query (editable)">
-              <div className="overflow-hidden rounded-b-xl">
+            <Zone label="SQL Query (editable)">
+              <div className="overflow-hidden rounded-b-[14px]">
                 <CodeMirror
                   value={localSql}
                   height="300px"
@@ -270,11 +263,11 @@ export function Phase2() {
                   style={{ fontSize: 12 }}
                 />
               </div>
-            </Card>
+            </Zone>
 
             {/* Calculated columns */}
             {qp.calculated_columns.length > 0 && (
-              <Card title="Calculated Columns">
+              <Zone label="Calculated Columns">
                 <div className="flex flex-wrap gap-2 p-4">
                   {qp.calculated_columns.map((col, i) => (
                     <div
@@ -290,12 +283,12 @@ export function Phase2() {
                     </div>
                   ))}
                 </div>
-              </Card>
+              </Zone>
             )}
 
             {/* Sample data */}
             {qa && qa.sample_rows.length > 0 && (
-              <Card title="Sample Data (5 rows)">
+              <Zone label="Sample Data (5 rows)">
                 <div className="p-4">
                   <DataTable
                     columns={Object.keys(qa.sample_rows[0])}
@@ -303,7 +296,7 @@ export function Phase2() {
                     maxRows={5}
                   />
                 </div>
-              </Card>
+              </Zone>
             )}
 
             {/* Instructions */}

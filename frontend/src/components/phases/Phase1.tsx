@@ -7,24 +7,27 @@ import {
   Trash2,
   ArrowRight,
   Plus,
+  Network,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import { useAppStore } from '../../store/appStore'
 import { useSSE } from '../../hooks/useSSE'
-import { addTable, confirmPhase1 } from '../../api/client'
+import { addTable, confirmPhase1, getErdData, profileTable } from '../../api/client'
 import { Button } from '../ui/Button'
 import { Textarea } from '../ui/Input'
-import { Card } from '../ui/Card'
+import { Card, Zone, SectionHeader } from '../ui/Card'
 import { Badge } from '../ui/Badge'
 import { ProgressLog } from '../ui/ProgressLog'
+import { Spinner } from '../ui/Spinner'
+import { ERDDiagram } from '../ui/ERDDiagram'
 import type { SchemaMap, ExcludedTable, TableProfile } from '../../types'
 
 function TableCard({ table }: { table: TableProfile }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <div className="card overflow-hidden">
       <button
         className="flex w-full items-center justify-between px-4 py-3 text-left"
         onClick={() => setOpen((o) => !o)}
@@ -121,7 +124,7 @@ interface ExcludedTableEntryProps {
   name: string
   entry: ExcludedTable
   sessionId: string
-  onAdded: () => void
+  onAdded: (selectedColumns: string[]) => void
 }
 
 function ExcludedTableEntry({
@@ -138,7 +141,7 @@ function ExcludedTableEntry({
     setAdding(true)
     try {
       await addTable(sessionId, name, selected)
-      onAdded()
+      onAdded(selected)
       toast.success(`Added ${name} to schema`)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -224,7 +227,20 @@ function ExcludedTableEntry({
 }
 
 export function Phase1() {
-  const { sessionId, dbConnected, phase1, setPhase1, setActivePhase, phase1Prompt, setPhase1Prompt, fetchAuditLog } =
+  const {
+    sessionId,
+    dbConnected,
+    phase1,
+    setPhase1,
+    erdData,
+    erdVisible,
+    setErdData,
+    setErdVisible,
+    setActivePhase,
+    phase1Prompt,
+    setPhase1Prompt,
+    fetchAuditLog,
+  } =
     useAppStore()
   const businessPrompt = phase1Prompt
   const setBusinessPrompt = setPhase1Prompt
@@ -232,6 +248,21 @@ export function Phase1() {
   const [showReasoning, setShowReasoning] = useState(false)
   const [showExcluded, setShowExcluded] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [erdLoading, setErdLoading] = useState(false)
+
+  async function fetchErdData() {
+    if (!sessionId) return
+    setErdLoading(true)
+    try {
+      const data = await getErdData(sessionId)
+      setErdData(data)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(msg)
+    } finally {
+      setErdLoading(false)
+    }
+  }
 
   // When SSE completes, update store
   useEffect(() => {
@@ -245,14 +276,17 @@ export function Phase1() {
         excludedTables: data.excluded_tables,
         confirmed: false,
       })
+      setErdData(null)
       void fetchAuditLog()
     }
-  }, [isDone, result, phase1.schemaMap, setPhase1, fetchAuditLog])
+  }, [isDone, result, phase1.schemaMap, setErdData, setPhase1, fetchAuditLog])
 
   function handleExplore() {
     if (!sessionId || !businessPrompt.trim()) return
     // Reset previous results
     setPhase1({ schemaMap: null, excludedTables: {}, confirmed: false })
+    setErdData(null)
+    setErdVisible(false)
     reset()
     start(
       `/api/sessions/${sessionId}/phase1/explore?prompt=${encodeURIComponent(
@@ -280,7 +314,73 @@ export function Phase1() {
 
   function handleRerun() {
     setPhase1({ schemaMap: null, excludedTables: {}, confirmed: false })
+    setErdData(null)
+    setErdVisible(false)
     reset()
+  }
+
+  async function handleProfileFromErd(tableName: string) {
+    if (!sessionId) return
+    const existing = phase1.excludedTables[tableName]
+    if (existing?.profile) {
+      setShowExcluded(true)
+      toast.message(`Select columns for ${tableName} in Excluded Tables`)
+      return
+    }
+    try {
+      const profile = await profileTable(sessionId, tableName)
+      setPhase1({
+        excludedTables: {
+          ...phase1.excludedTables,
+          [tableName]: {
+            profiled: true,
+            profile,
+            selected_columns: [],
+            added: false,
+            error: null,
+          },
+        },
+      })
+      setShowExcluded(true)
+      toast.success(`Profiled ${tableName}. Select columns in Excluded Tables.`)
+      if (erdVisible) void fetchErdData()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.error(msg)
+    }
+  }
+
+  function handleTableAdded(name: string, entry: ExcludedTable, selectedColumns: string[]) {
+    const profile = entry.profile
+    const selectedProfile: TableProfile | null = profile
+      ? {
+          ...profile,
+          columns:
+            selectedColumns.length > 0
+              ? profile.columns.filter((col) => selectedColumns.includes(col.column_name))
+              : profile.columns,
+        }
+      : null
+
+    setPhase1({
+      schemaMap:
+        schemaMap && selectedProfile
+          ? {
+              ...schemaMap,
+              all_tables: schemaMap.all_tables.includes(name)
+                ? schemaMap.all_tables
+                : [...schemaMap.all_tables, name],
+              profiled_tables: schemaMap.profiled_tables.some((table) => table.table_name === name)
+                ? schemaMap.profiled_tables
+                : [...schemaMap.profiled_tables, selectedProfile],
+            }
+          : schemaMap,
+      excludedTables: {
+        ...excludedTables,
+        [name]: { ...entry, added: true, selected_columns: selectedColumns },
+      },
+    })
+    if (erdVisible) void fetchErdData()
   }
 
   const schemaMap = phase1.schemaMap as SchemaMap | null
@@ -289,16 +389,14 @@ export function Phase1() {
   return (
     <div className="flex flex-col gap-6 p-6 max-w-4xl w-full mx-auto">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-text">Schema Explorer</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Describe what you want to build and we'll identify the relevant
-          database tables.
-        </p>
-      </div>
+      <SectionHeader
+        eyebrow="Phase 1"
+        title="Schema Explorer"
+        subtitle="Describe what you want to build and we'll identify the relevant database tables."
+      />
 
       {/* Input */}
-      <Card>
+      <Zone label="Requirement">
         <div className="p-4 space-y-4">
           <Textarea
             label="Business requirement"
@@ -322,7 +420,7 @@ export function Phase1() {
             </p>
           )}
         </div>
-      </Card>
+      </Zone>
 
       {/* Progress */}
       <ProgressLog
@@ -341,28 +439,22 @@ export function Phase1() {
             className="space-y-5"
           >
             {/* Reasoning */}
-            <Card>
-              <button
-                className="flex w-full items-center justify-between px-4 py-3"
-                onClick={() => setShowReasoning((o) => !o)}
-              >
-                <span className="text-sm font-semibold text-text">
-                  Agent Reasoning
-                </span>
-                {showReasoning ? (
-                  <ChevronDown size={14} className="text-text-muted" />
-                ) : (
-                  <ChevronRight size={14} className="text-text-muted" />
-                )}
-              </button>
+            <Zone
+              label="Agent Reasoning"
+              headerRight={
+                <button onClick={() => setShowReasoning((o) => !o)} className="text-text-dim hover:text-text-muted transition-colors">
+                  {showReasoning ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                </button>
+              }
+            >
               {showReasoning && (
-                <div className="border-t border-border px-4 py-3">
+                <div className="px-4 py-3">
                   <p className="text-sm text-text-muted leading-relaxed">
                     {schemaMap.agent_reasoning}
                   </p>
                 </div>
               )}
-            </Card>
+            </Zone>
 
             {/* Selected tables */}
             <div>
@@ -386,7 +478,7 @@ export function Phase1() {
 
             {/* Suggested joins */}
             {schemaMap.suggested_joins.length > 0 && (
-              <Card title="Suggested Joins">
+              <Zone label="Suggested Joins">
                 <div className="space-y-2 p-4">
                   {schemaMap.suggested_joins.map((join, i) => (
                     <pre
@@ -397,8 +489,43 @@ export function Phase1() {
                     </pre>
                   ))}
                 </div>
-              </Card>
+              </Zone>
             )}
+
+            {/* ERD diagram */}
+            <Zone
+              label="Relationship Diagram"
+              headerRight={
+                <button
+                  onClick={() => {
+                    const next = !erdVisible
+                    setErdVisible(next)
+                    if (next && !erdData) void fetchErdData()
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-text-muted hover:bg-surface hover:text-text transition-colors"
+                >
+                  <Network size={13} />
+                  {erdVisible ? 'Hide diagram' : 'Show diagram'}
+                </button>
+              }
+            >
+              {erdVisible && (
+                <div className="p-4">
+                  {erdData ? (
+                    <ERDDiagram
+                      erdData={erdData}
+                      sessionId={sessionId ?? ''}
+                      onAddExcludedTable={(tableName) => void handleProfileFromErd(tableName)}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 rounded border border-border bg-card px-4 py-6 text-sm text-text-muted">
+                      <Spinner size={16} />
+                      {erdLoading ? 'Loading diagram...' : 'Diagram data not loaded'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Zone>
 
             {/* Excluded tables */}
             {Object.keys(excludedTables).length > 0 && (
@@ -429,14 +556,7 @@ export function Phase1() {
                         name={name}
                         entry={entry}
                         sessionId={sessionId ?? ''}
-                        onAdded={() => {
-                          setPhase1({
-                            excludedTables: {
-                              ...excludedTables,
-                              [name]: { ...entry, added: true },
-                            },
-                          })
-                        }}
+                        onAdded={(selectedColumns) => handleTableAdded(name, entry, selectedColumns)}
                       />
                     ))}
                   </div>

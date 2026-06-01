@@ -112,22 +112,87 @@ class DBConnector:
             return self._profile_mongo_collection(table_name)
         return self._profile_sql_table(table_name)
 
+    def run_query(self, sql: str, limit: int = 500) -> tuple[bool, list[dict], str]:
+        """Run a generated SQL query and return up to `limit` rows as dictionaries."""
+        if self.db_type == "mongodb":
+            return False, [], "Phase 2 SQL QA is not supported for MongoDB connections"
+
+        from sqlalchemy import text
+
+        try:
+            bounded_sql = (
+                f"SELECT * FROM ({self._clean_sql(sql)}) AS _phase2_query "
+                f"LIMIT {int(limit)}"
+            )
+            with self._get_engine().connect() as conn:
+                result = conn.execute(text(bounded_sql))
+                rows = [dict(row._mapping) for row in result]
+            return True, rows, ""
+        except Exception as exc:
+            return False, [], str(exc)
+
+    def get_row_count(self, sql: str) -> tuple[bool, int, str]:
+        """Return the exact row count for a generated SQL query."""
+        if self.db_type == "mongodb":
+            return False, 0, "Phase 2 SQL QA is not supported for MongoDB connections"
+
+        from sqlalchemy import text
+
+        try:
+            count_sql = (
+                f"SELECT COUNT(*) AS row_count "
+                f"FROM ({self._clean_sql(sql)}) AS _phase2_query"
+            )
+            with self._get_engine().connect() as conn:
+                row_count = conn.execute(text(count_sql)).scalar() or 0
+            return True, int(row_count), ""
+        except Exception as exc:
+            return False, 0, str(exc)
+
+    def check_duplicates(self, sql: str) -> tuple[bool, int, str]:
+        """Return duplicate row count for the generated SQL result set."""
+        if self.db_type == "mongodb":
+            return False, 0, "Phase 2 SQL QA is not supported for MongoDB connections"
+
+        from sqlalchemy import text
+
+        try:
+            cleaned = self._clean_sql(sql)
+            dup_sql = (
+                "SELECT "
+                "  (SELECT COUNT(*) FROM ({q}) AS _all_rows) - "
+                "  (SELECT COUNT(*) FROM (SELECT DISTINCT * FROM ({q}) AS _distinct_src) AS _distinct_rows) "
+                "AS duplicate_count"
+            ).format(q=cleaned)
+            with self._get_engine().connect() as conn:
+                duplicate_count = conn.execute(text(dup_sql)).scalar() or 0
+            return True, int(duplicate_count), ""
+        except Exception as exc:
+            return False, 0, str(exc)
+
+    @staticmethod
+    def _clean_sql(sql: str) -> str:
+        """Make generated SELECT SQL safe to embed as a subquery."""
+        return sql.strip().rstrip(";")
+
     def _profile_sql_table(self, table_name: str) -> TableProfile:
         from sqlalchemy import inspect, text
 
         engine = self._get_engine()
         inspector = inspect(engine)
-        columns_info = inspector.get_columns(table_name)
+        schema_name, plain_table_name = self._split_table_name(table_name)
+        columns_info = inspector.get_columns(plain_table_name, schema=schema_name)
+        table_ref = self._quote_table_name(table_name)
 
         with engine.connect() as conn:
             # Row count
             row_count = conn.execute(
-                text(f"SELECT COUNT(*) FROM {table_name}")
+                text(f"SELECT COUNT(*) FROM {table_ref}")
             ).scalar() or 0
 
             # 3 sample rows
             sample_result = conn.execute(
-                text(f"SELECT * FROM {table_name} LIMIT 3")
+                text(f"SELECT * FROM {table_ref} LIMIT 3")
             )
             sample_rows = [
                 {k: (str(v) if v is not None else None) for k, v in zip(sample_result.keys(), row)}
@@ -138,14 +203,15 @@ class DBConnector:
             for col_info in columns_info:
                 col_name = col_info["name"]
                 col_type = str(col_info["type"])
+                col_ref = self._quote_identifier(col_name)
 
                 # Null percentage
                 try:
                     null_count = (
                         conn.execute(
                             text(
-                                f"SELECT COUNT(*) FROM {table_name} "
-                                f"WHERE {col_name} IS NULL"
+                                f"SELECT COUNT(*) FROM {table_ref} "
+                                f"WHERE {col_ref} IS NULL"
                             )
                         ).scalar()
                         or 0
@@ -158,8 +224,8 @@ class DBConnector:
                 try:
                     sv_result = conn.execute(
                         text(
-                            f"SELECT DISTINCT {col_name} FROM {table_name} "
-                            f"WHERE {col_name} IS NOT NULL LIMIT 5"
+                            f"SELECT DISTINCT {col_ref} FROM {table_ref} "
+                            f"WHERE {col_ref} IS NOT NULL LIMIT 5"
                         )
                     )
                     sample_values = [str(r[0]) for r in sv_result]
@@ -196,6 +262,22 @@ class DBConnector:
             columns=column_profiles,
             sample_rows=sample_rows,
         )
+
+    @staticmethod
+    def _split_table_name(table_name: str) -> tuple[str | None, str]:
+        parts = [p for p in table_name.split(".") if p]
+        if len(parts) >= 2:
+            return ".".join(parts[:-1]), parts[-1]
+        return None, table_name
+
+    def _quote_table_name(self, table_name: str) -> str:
+        return ".".join(self._quote_identifier(part) for part in table_name.split("."))
+
+    def _quote_identifier(self, name: str) -> str:
+        escaped = name.replace('"', '""').replace("`", "``")
+        if self.db_type == "mysql":
+            return f"`{escaped}`"
+        return f'"{escaped}"'
 
     def _profile_mongo_collection(self, collection_name: str) -> TableProfile:
         client = self._get_mongo_client()

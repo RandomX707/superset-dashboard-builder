@@ -180,3 +180,158 @@ export interface CsvSession {
   columns: CsvColumn[]
   charts: CsvChart[]
 }
+
+export interface DQIssue {
+  severity: 'critical' | 'warning' | 'info'
+  column: string | null
+  issue_type: string
+  description: string
+  affected_rows: number | null
+  affected_pct: number | null
+}
+
+export interface DQColumnProfile {
+  name: string
+  dtype: string
+  null_count: number
+  null_pct: number
+  distinct_count: number
+  distinct_pct: number
+  min_val?: number | null
+  max_val?: number | null
+  mean_val?: number | null
+  std_dev?: number | null
+  outlier_count?: number | null
+  outlier_pct?: number | null
+  zeros_pct?: number | null
+  top_values?: Array<{ value: string; count: number; pct: number }> | null
+  avg_length?: number | null
+  min_date?: string | null
+  max_date?: string | null
+  date_range_days?: number | null
+  future_dates_count?: number | null
+}
+
+export interface DQDatasetMetrics {
+  total_rows: number
+  total_columns: number
+  duplicate_rows_count: number
+  duplicate_rows_pct: number
+  columns_with_nulls: number
+  columns_all_null: number
+  columns_single_value: number
+  sample_size: number
+}
+
+export interface DataQualityReport {
+  dataset_name: string
+  generated_at: string
+  overall_score: number
+  overall_grade: string
+  summary: string
+  dataset_metrics: DQDatasetMetrics
+  issues: DQIssue[]
+  column_profiles: DQColumnProfile[]
+  error: string | null
+}
+
+export interface VersionSummary {
+  version: number
+  created_at: string
+  chart_count: number
+  change_summary: string
+  file: string
+}
+
+export interface DashboardHistory {
+  dashboard_id: number
+  dashboard_title: string
+  dashboard_url: string
+  versions: VersionSummary[]
+}
+
+export interface DashboardHistorySummary {
+  dashboard_id: number
+  dashboard_title: string
+  dashboard_url: string
+  version_count: number
+  latest_version: number
+  last_updated: string
+}
+
+export interface VersionSnapshot {
+  version: number
+  dashboard_id: number
+  dashboard_title: string
+  dashboard_url: string
+  created_at: string
+  created_by: string
+  requirements_prompt: string
+  dataset_name: string
+  chart_count: number
+  filter_count: number
+  position_json: Record<string, unknown>
+  charts: Array<{
+    id: number
+    title: string
+    viz_type: string
+    dataset_id: number
+    params?: Record<string, unknown>
+  }>
+  filters: Array<{
+    id: string
+    name: string
+    filter_type: string
+    column: string
+  }>
+  change_summary: string
+}
+
+export interface ErdColumn {
+  name: string
+  type: string
+  is_pk: boolean
+  is_fk: boolean
+  is_date: boolean
+  null_pct: number
+}
+
+export interface ErdTableNode {
+  table_name: string
+  row_count: number | null
+  columns: ErdColumn[]
+  is_primary: boolean
+  is_selected: boolean
+}
+
+export interface ErdEdge {
+  join_table: string
+  source_table: string
+  source_col: string
+  target_table: string
+  target_col: string
+  join_string: string
+}
+
+export interface ErdData {
+  selected_nodes: ErdTableNode[]
+  excluded_nodes: ErdTableNode[]
+  edges: ErdEdge[]
+  suggested_primary: string
+}
+
+export interface ChartDescriptionResult {
+  id: number
+  title: string
+  description: string
+  ok: boolean
+  error?: string | null
+}
+
+export interface GenerateDescriptionsResponse {
+  results: ChartDescriptionResult[]
+  total: number
+  succeeded: number
+  failed: number
+  error: string | null
+}

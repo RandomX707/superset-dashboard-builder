@@ -8,6 +8,7 @@ import { Phase1 } from './components/phases/Phase1'
 import { Phase2 } from './components/phases/Phase2'
 import { Phase3 } from './components/phases/Phase3'
 import { AuditPanel } from './components/ui/AuditPanel'
+import { VersionHistoryPanel } from './components/ui/VersionHistoryPanel'
 
 function PhaseContent() {
   const { activePhase } = useAppStore()
@@ -63,6 +64,8 @@ export default function App() {
     llmModel,
     setSupersetConfig,
     setLlmModel,
+    versionHistory,
+    setVersionPanelOpen,
   } = useAppStore()
 
   // Sync theme class to <html>
@@ -78,6 +81,26 @@ export default function App() {
   useEffect(() => {
     async function init() {
       let sid = sessionId
+      let nextSupersetConfig = supersetConfig
+      let nextLlmModel = llmModel
+
+      try {
+        const defaults = await getDefaults()
+        if (!nextSupersetConfig.url || nextSupersetConfig.url === 'http://localhost:8088') {
+          nextSupersetConfig = {
+            ...nextSupersetConfig,
+            url: defaults.superset_url,
+            username: defaults.superset_username,
+          }
+          setSupersetConfig(nextSupersetConfig)
+        }
+        if (!nextLlmModel) {
+          nextLlmModel = defaults.llm_model
+          setLlmModel(nextLlmModel)
+        }
+      } catch {
+        // silently ignore
+      }
 
       // If we have a stored session, verify it still exists on the server.
       // The server is in-memory, so a restart wipes all sessions.
@@ -85,8 +108,8 @@ export default function App() {
         try {
           await updateConfig(sid, {
             db: { ...dbConfig },
-            superset: { ...supersetConfig },
-            llm_model: llmModel,
+            superset: { ...nextSupersetConfig },
+            llm_model: nextLlmModel,
           })
         } catch (e) {
           if (e instanceof ApiError && e.status === 404) {
@@ -105,8 +128,8 @@ export default function App() {
           setSessionId(sid)
           await updateConfig(sid, {
             db: { ...dbConfig },
-            superset: { ...supersetConfig },
-            llm_model: llmModel,
+            superset: { ...nextSupersetConfig },
+            llm_model: nextLlmModel,
           })
         } catch (e) {
           console.error('Failed to create session:', e)
@@ -114,23 +137,6 @@ export default function App() {
         }
       }
 
-      // Load defaults and merge with stored config
-      try {
-        const defaults = await getDefaults()
-        // Apply defaults if URL is empty or still the old hardcoded placeholder
-        if (!supersetConfig.url || supersetConfig.url === 'http://localhost:8088') {
-          setSupersetConfig({
-            ...supersetConfig,
-            url: defaults.superset_url,
-            username: defaults.superset_username,
-          })
-        }
-        if (!llmModel) {
-          setLlmModel(defaults.llm_model)
-        }
-      } catch {
-        // silently ignore
-      }
     }
 
     void init()
@@ -145,6 +151,12 @@ export default function App() {
         <PhaseContent />
       </main>
       <AuditPanel />
+      {versionHistory.panelOpen && sessionId && (
+        <VersionHistoryPanel
+          sessionId={sessionId}
+          onClose={() => setVersionPanelOpen(false)}
+        />
+      )}
     </div>
   )
 }

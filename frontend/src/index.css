@@ -2,30 +2,68 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Light mode (default) ── */
+/* ── Light mode (default) — warm parchment palette ── */
 :root {
-  --color-bg: #f1f3f9;
-  --color-card: #ffffff;
-  --color-card-hover: #f8fafc;
-  --color-surface: #eaeef5;
-  --color-stripe: #f5f7fc;
-  --color-border: #e2e8f0;
-  --color-text: #0f172a;
-  --color-text-muted: #64748b;
-  --color-text-dim: #94a3b8;
+  --color-bg: #efece4;
+  --color-card: #f7f5ee;
+  --color-card-hover: #f2efe6;
+  --color-surface: #e8e4d8;
+  --color-stripe: #edeae0;
+  --color-border: #d9d4c5;
+  --color-text: #1a1a17;
+  --color-text-muted: #6b6a5f;
+  --color-text-dim: #9c9a8c;
+  --color-accent: #3d5a3a;
+  --color-accent-hover: #2f4a2d;
+  --color-lime: #c6ff3d;
+  --color-coral: #ff6a4d;
+  --color-success: #3d5a3a;
+  --color-error: #c8341a;
+  --color-warning: #c47a1a;
+  /* RGB triplets for Tailwind opacity modifiers (bg-accent/15 etc.) */
+  --color-accent-rgb: 61, 90, 58;
+  --color-success-rgb: 61, 90, 58;
+  --color-error-rgb: 200, 52, 26;
+  --color-warning-rgb: 196, 122, 26;
+  --color-lime-rgb: 198, 255, 61;
+  --color-coral-rgb: 255, 106, 77;
+  /* Ambient halo colors */
+  --halo-lime: rgba(198, 255, 61, 0.10);
+  --halo-coral: rgba(255, 106, 77, 0.07);
+  /* Shadows */
+  --shadow-card: 0 1px 0 rgba(26, 26, 23, 0.02), 0 1px 2px rgba(26, 26, 23, 0.05);
+  --shadow-elev: 0 12px 36px rgba(26, 26, 23, 0.08), 0 1px 2px rgba(26, 26, 23, 0.05);
+  --grad-brand: linear-gradient(135deg, #c6ff3d 0%, #8fd13f 50%, #3d5a3a 100%);
 }
 
-/* ── Dark mode ── */
+/* ── Dark mode — warm near-black ── */
 .dark {
-  --color-bg: #08090d;
-  --color-card: #0f1117;
-  --color-card-hover: #13151f;
-  --color-surface: #0a0b0f;
-  --color-stripe: #0d0e14;
-  --color-border: #1e2028;
-  --color-text: #e2e8f0;
-  --color-text-muted: #64748b;
-  --color-text-dim: #475569;
+  --color-bg: #0e0d0a;
+  --color-card: #181612;
+  --color-card-hover: #1e1c17;
+  --color-surface: #141210;
+  --color-stripe: #161310;
+  --color-border: #2a2722;
+  --color-text: #f0ece1;
+  --color-text-muted: #9e998c;
+  --color-text-dim: #625f56;
+  --color-accent: #c6ff3d;
+  --color-accent-hover: #d7ff5e;
+  --color-lime: #c6ff3d;
+  --color-coral: #ff7a5c;
+  --color-success: #c6ff3d;
+  --color-error: #ff7a5c;
+  --color-warning: #f2b24a;
+  /* RGB triplets */
+  --color-accent-rgb: 198, 255, 61;
+  --color-success-rgb: 198, 255, 61;
+  --color-error-rgb: 255, 122, 92;
+  --color-warning-rgb: 242, 178, 74;
+  --color-lime-rgb: 198, 255, 61;
+  --color-coral-rgb: 255, 122, 92;
+  /* Ambient halos */
+  --halo-lime: rgba(198, 255, 61, 0.06);
+  --halo-coral: rgba(255, 122, 92, 0.05);
 }
 
 @layer base {
@@ -42,7 +80,10 @@
   }
 
   body {
-    background-color: var(--color-bg);
+    background:
+      radial-gradient(1000px 600px at 85% -10%, var(--halo-lime), transparent 60%),
+      radial-gradient(900px 600px at -10% 110%, var(--halo-coral), transparent 60%),
+      var(--color-bg);
     color: var(--color-text);
     font-family: 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -67,6 +108,105 @@
   ::-webkit-scrollbar-thumb:hover {
     background-color: var(--color-text-dim);
   }
+}
+
+@layer components {
+  .card {
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .dark .card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0) 40%),
+      var(--color-card);
+  }
+
+  .terminal {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  .dark .terminal {
+    background: linear-gradient(180deg, #131109, #0c0b08);
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+
+  .btn-primary {
+    background: var(--color-accent);
+    color: #0e0d0a;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 8px 22px -8px rgba(198, 255, 61, 0.55);
+    font-weight: 700;
+  }
+
+  .btn-primary:hover {
+    background: var(--color-accent-hover);
+  }
+
+  .btn-success-themed {
+    background: rgb(var(--color-success-rgb));
+    color: #ffffff;
+  }
+
+  .dark .btn-success-themed {
+    color: #0e0d0a;
+  }
+
+  .btn-success-themed:hover {
+    opacity: 0.9;
+  }
+
+  .step-line {
+    height: 2px;
+    background: var(--color-border);
+    flex: 1;
+    transition: background 0.3s ease;
+  }
+
+  .step-line-done {
+    background: linear-gradient(90deg, var(--color-lime), var(--color-coral));
+  }
+
+  .focus-ring:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(198, 255, 61, 0.35);
+  }
+}
+
+@layer utilities {
+  .shimmer {
+    background-size: 200% 100%;
+    background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06) 50%, transparent);
+    animation: shimmer 1.8s linear infinite;
+  }
+
+  .pulse-dot {
+    animation: pulseDot 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.25); }
 }
 
 /* ── CodeMirror overrides ── */

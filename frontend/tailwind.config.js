@@ -5,7 +5,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Theme-aware (CSS variable-driven)
+        // Theme-aware semantic tokens (CSS variable-driven)
         bg: 'var(--color-bg)',
         card: 'var(--color-card)',
         'card-hover': 'var(--color-card-hover)',
@@ -17,14 +17,16 @@ export default {
           muted: 'var(--color-text-muted)',
           dim: 'var(--color-text-dim)',
         },
-        // Static (same in both modes)
+        // Opacity-modifier-enabled colors (rgba + CSS var RGB triplets)
         accent: {
-          DEFAULT: '#6366f1',
-          hover: '#4f46e5',
+          DEFAULT: 'rgba(var(--color-accent-rgb), <alpha-value>)',
+          hover: 'var(--color-accent-hover)',
         },
-        success: '#22c55e',
-        error: '#ef4444',
-        warning: '#f59e0b',
+        success: 'rgba(var(--color-success-rgb), <alpha-value>)',
+        error: 'rgba(var(--color-error-rgb), <alpha-value>)',
+        warning: 'rgba(var(--color-warning-rgb), <alpha-value>)',
+        lime: 'rgba(var(--color-lime-rgb), <alpha-value>)',
+        coral: 'rgba(var(--color-coral-rgb), <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

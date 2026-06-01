@@ -8,6 +8,7 @@ import {
   BarChart3,
   ScrollText,
   Download,
+  History,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { toast } from 'sonner'
@@ -75,6 +76,8 @@ export function Sidebar() {
     auditEntries,
     setAuditPanelOpen,
     fetchAuditLog,
+    setVersionPanelOpen,
+    fetchAllDashboardHistory,
   } = useAppStore()
 
   const [testingDb, setTestingDb] = useState(false)
@@ -133,13 +136,19 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col overflow-y-auto border-r border-border bg-card">
+    <aside className="flex h-full w-[288px] shrink-0 flex-col overflow-y-auto border-r border-border bg-card">
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400 shadow-sm">
-          <BarChart3 size={15} className="text-white" strokeWidth={2.5} />
+      <div className="flex h-16 items-center gap-2.5 border-b border-border px-4">
+        <div
+          className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm"
+          style={{ background: 'var(--grad-brand)' }}
+        >
+          <BarChart3 size={16} className="text-[#0e0d0a]" strokeWidth={2.5} />
         </div>
-        <span className="text-sm font-bold tracking-wide bg-gradient-to-r from-violet-500 to-cyan-400 bg-clip-text text-transparent">
+        <span
+          className="text-sm font-bold tracking-wide bg-clip-text text-transparent"
+          style={{ backgroundImage: 'var(--grad-brand)' }}
+        >
           DATA VIZ
         </span>
       </div>
@@ -350,6 +359,19 @@ export function Sidebar() {
             className="flex-1 rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text hover:border-text-dim transition-colors"
           >
             View full log
+          </button>
+        </div>
+
+        <div className="px-4 pb-3">
+          <button
+            onClick={() => {
+              setVersionPanelOpen(true)
+              void fetchAllDashboardHistory()
+            }}
+            className="flex w-full items-center justify-center gap-1.5 rounded border border-border px-2 py-1.5 text-[11px] text-text-muted hover:text-text hover:border-text-dim transition-colors"
+          >
+            <History size={12} />
+            Version history
           </button>
         </div>
       </div>

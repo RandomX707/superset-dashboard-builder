@@ -1,4 +1,18 @@
-import type { TableProfile, AuditLog, ChartPreviewData, DashboardPlan, CsvSession, CsvQueryResult, CsvChart } from '../types'
+import type {
+  TableProfile,
+  AuditLog,
+  ChartPreviewData,
+  DashboardPlan,
+  CsvSession,
+  CsvQueryResult,
+  CsvChart,
+  DataQualityReport,
+  DashboardHistory,
+  DashboardHistorySummary,
+  VersionSnapshot,
+  ErdData,
+  GenerateDescriptionsResponse,
+} from '../types'
 
 const BASE = '/api'
 
@@ -227,4 +241,101 @@ export async function exportCsvExcel(sessionId: string): Promise<void> {
   a.download = 'dashboard.xlsx'
   a.click()
   URL.revokeObjectURL(url)
+}
+
+export async function getDataQualityReport(sessionId: string, datasetName: string): Promise<DataQualityReport> {
+  return request('GET', `/sessions/${sessionId}/phase3/data-quality?dataset_name=${encodeURIComponent(datasetName)}`)
+}
+
+export async function exportDQReportPdf(sessionId: string, report: DataQualityReport): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}/phase3/data-quality/export-pdf`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(report),
+  })
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'data-quality-report.pdf'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function getDashboardHistoryList(
+  sessionId: string
+): Promise<{ dashboards: DashboardHistorySummary[] }> {
+  return request('GET', `/sessions/${sessionId}/dashboard-history`)
+}
+
+export async function getDashboardHistory(
+  sessionId: string,
+  dashboardId: number
+): Promise<DashboardHistory> {
+  return request('GET', `/sessions/${sessionId}/dashboard-history/${dashboardId}`)
+}
+
+export async function getVersionSnapshot(
+  sessionId: string,
+  dashboardId: number,
+  version: number
+): Promise<VersionSnapshot> {
+  return request('GET', `/sessions/${sessionId}/dashboard-history/${dashboardId}/versions/${version}`)
+}
+
+export async function restoreVersion(
+  sessionId: string,
+  dashboardId: number,
+  version: number
+): Promise<{ ok: boolean; message?: string; error?: string; saved_version?: number; backup_version?: number }> {
+  return request('POST', `/sessions/${sessionId}/dashboard-history/${dashboardId}/restore/${version}`)
+}
+
+export async function deleteVersion(
+  sessionId: string,
+  dashboardId: number,
+  version: number
+): Promise<{ ok: boolean }> {
+  return request('DELETE', `/sessions/${sessionId}/dashboard-history/${dashboardId}/versions/${version}`)
+}
+
+export async function downloadVersionSnapshot(
+  sessionId: string,
+  dashboardId: number,
+  version: number
+): Promise<void> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}/dashboard-history/${dashboardId}/versions/${version}/download`)
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `dashboard_${dashboardId}_v${version}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function getErdData(sessionId: string): Promise<ErdData> {
+  return request('GET', `/sessions/${sessionId}/phase1/erd-data`)
+}
+
+export async function generateChartDescriptions(
+  sessionId: string,
+  payload: {
+    chart_ids: number[]
+    chart_specs: Array<{
+      id: number
+      title: string
+      viz_type: string
+      metrics: unknown[]
+      groupby: string[]
+      time_column: string | null
+      time_grain: string | null
+    }>
+    dataset_name: string
+    dashboard_title: string
+  }
+): Promise<GenerateDescriptionsResponse> {
+  return request('POST', `/sessions/${sessionId}/phase3/generate-descriptions`, payload)
 }

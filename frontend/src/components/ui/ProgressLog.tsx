@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Spinner } from './Spinner'
 
 interface LogEntry {
   message: string
@@ -13,6 +12,7 @@ interface ProgressLogProps {
   isStreaming: boolean
   isDone: boolean
   error: string | null
+  label?: string
 }
 
 export function ProgressLog({
@@ -20,6 +20,7 @@ export function ProgressLog({
   isStreaming,
   isDone,
   error,
+  label = 'agent output',
 }: ProgressLogProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -30,8 +31,28 @@ export function ProgressLog({
   if (!isStreaming && !isDone && !error && logs.length === 0) return null
 
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 font-mono text-xs">
-      <div className="max-h-48 overflow-y-auto space-y-1">
+    <div className="terminal overflow-hidden">
+      {/* Chrome header */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: '#ff5f57' }} />
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: '#febc2e' }} />
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: '#28c840' }} />
+        </div>
+        <span className="flex-1 text-center text-[10px] font-semibold uppercase tracking-wider text-text-dim">
+          {label}
+        </span>
+        {isStreaming && (
+          <div className="flex items-center gap-1">
+            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" style={{ animationDelay: '0ms' }} />
+            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" style={{ animationDelay: '200ms' }} />
+            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" style={{ animationDelay: '400ms' }} />
+          </div>
+        )}
+      </div>
+
+      {/* Log lines */}
+      <div className="max-h-48 overflow-y-auto space-y-1 p-3">
         <AnimatePresence initial={false}>
           {logs.map((log, i) => (
             <motion.div
@@ -40,7 +61,7 @@ export function ProgressLog({
               animate={{ opacity: 1, y: 0 }}
               className="flex items-start gap-2"
             >
-              <span className="shrink-0 text-text-dim">{log.timestamp}</span>
+              <span className="shrink-0 text-accent select-none">›</span>
               <span
                 className={
                   i === logs.length - 1 && isStreaming
@@ -50,9 +71,6 @@ export function ProgressLog({
               >
                 {log.message}
               </span>
-              {i === logs.length - 1 && isStreaming && (
-                <Spinner size={12} className="mt-0.5 shrink-0" />
-              )}
             </motion.div>
           ))}
         </AnimatePresence>

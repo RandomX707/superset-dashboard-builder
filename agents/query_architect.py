@@ -112,18 +112,33 @@ def _inject_calculated_columns(sql: str, calc_cols: list[dict]) -> str:
         return sql
 
     expressions = [f"    {c['expression']} AS {c['name']}" for c in calc_cols]
-
-    # Find the first SELECT keyword and locate the FROM keyword to insert before it
-    # Simple approach: append before the first FROM at the top level
-    from_match = re.search(r"\bFROM\b", sql, re.IGNORECASE)
-    if not from_match:
+    insert_pos = _find_final_select_from(sql)
+    if insert_pos is None:
         return sql
 
-    insert_pos = from_match.start()
-    # Find the last comma or column before FROM
     before_from = sql[:insert_pos].rstrip()
     extra = ",\n" + ",\n".join(expressions) + "\n"
     return before_from + extra + sql[insert_pos:]
+
+
+def _find_final_select_from(sql: str) -> int | None:
+    """Find the FROM that belongs to the final/top-level SELECT."""
+    tokens = list(re.finditer(r"\b(SELECT|FROM)\b|[(),]", sql, re.IGNORECASE))
+    depth = 0
+    top_level_select_seen = False
+
+    for token in tokens:
+        value = token.group(0).upper()
+        if value == "(":
+            depth += 1
+        elif value == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0 and value == "SELECT":
+            top_level_select_seen = True
+        elif depth == 0 and value == "FROM" and top_level_select_seen:
+            return token.start()
+
+    return None
 
 
 class QueryArchitect:

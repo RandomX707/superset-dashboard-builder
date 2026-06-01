@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from openai import OpenAI
 
 from config import config
+
+logger = logging.getLogger(__name__)
 
 
 def get_client() -> OpenAI:
@@ -63,12 +67,13 @@ def chat(
         kwargs["temperature"] = temperature
     response = client.chat.completions.create(**kwargs)
     usage = response.usage
-    print(
-        f"DEBUG llm usage model={resolved_model} "
-        f"prompt={getattr(usage, 'prompt_tokens', '?')} "
-        f"completion={getattr(usage, 'completion_tokens', '?')} "
-        f"total={getattr(usage, 'total_tokens', '?')} "
-        f"finish_reason={response.choices[0].finish_reason}"
+    logger.debug(
+        "LLM usage model=%s prompt=%s completion=%s total=%s finish_reason=%s",
+        resolved_model,
+        getattr(usage, "prompt_tokens", "?"),
+        getattr(usage, "completion_tokens", "?"),
+        getattr(usage, "total_tokens", "?"),
+        response.choices[0].finish_reason,
     )
     content = response.choices[0].message.content
     if not content:

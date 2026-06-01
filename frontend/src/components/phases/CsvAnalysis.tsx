@@ -296,10 +296,12 @@ export function CsvAnalysis({ sessionId }: Props) {
     if (!question.trim() || !csvSession || querying) return
     const q = question.trim()
     setQuestion('')
-    appendCsvChatMessage({ role: 'user', content: q })
+    const userTurn = { role: 'user' as const, content: q }
+    const nextHistory = [...csvChatHistory, userTurn]
+    appendCsvChatMessage(userTurn)
     setQuerying(true)
     try {
-      const result = await queryCsv(sessionId, q, csvChatHistory)
+      const result = await queryCsv(sessionId, q, nextHistory)
       if (result.error) {
         appendCsvChatMessage({ role: 'assistant', content: `Error: ${result.error}` })
         toast.error(result.error)

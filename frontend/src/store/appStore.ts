@@ -14,8 +14,14 @@ import type {
   ChartSpec,
   CsvSession,
   CsvChart,
+  DataQualityReport,
+  DashboardHistory,
+  DashboardHistorySummary,
+  VersionSnapshot,
+  ErdData,
+  ChartDescriptionResult,
 } from '../types'
-import { getAuditLog } from '../api/client'
+import { getAuditLog, getDashboardHistory, getDashboardHistoryList } from '../api/client'
 
 interface Phase1State {
   schemaMap: SchemaMap | null
@@ -34,10 +40,12 @@ interface Phase3State {
   datasetName: string
   dashboardTitle: string
   requirements: string
+  dashboardId: number | null
   datasetInfo: DatasetInfo | null
   dashboardPlan: DashboardPlan | null
   planReady: boolean
   dashboardUrl: string | null
+  chartIds: number[]
   qaReport: QAReport | null
 }
 
@@ -73,12 +81,26 @@ interface AppState {
 
   phase1: Phase1State
   setPhase1: (p: Partial<Phase1State>) => void
+  erdData: ErdData | null
+  erdVisible: boolean
+  setErdData: (data: ErdData | null) => void
+  setErdVisible: (visible: boolean) => void
 
   phase2: Phase2State
   setPhase2: (p: Partial<Phase2State>) => void
 
   phase3: Phase3State
   setPhase3: (p: Partial<Phase3State>) => void
+  descriptionGeneration: {
+    loading: boolean
+    results: ChartDescriptionResult[]
+    done: boolean
+    error: string | null
+  }
+  setDescriptionGenerationLoading: (b: boolean) => void
+  setDescriptionGenerationResults: (r: ChartDescriptionResult[]) => void
+  setDescriptionGenerationDone: (b: boolean) => void
+  resetDescriptionGeneration: () => void
 
   phase3Step: 1 | 2 | 3
   editedPlan: DashboardPlan | null
@@ -97,6 +119,26 @@ interface AppState {
   setCsvCanvasCharts: (charts: CsvChart[]) => void
   addCsvCanvasChart: (chart: CsvChart) => void
   removeCsvCanvasChart: (id: string) => void
+
+  dqReport: DataQualityReport | null
+  dqLoading: boolean
+  setDqReport: (report: DataQualityReport | null) => void
+  setDqLoading: (loading: boolean) => void
+
+  versionHistory: {
+    allDashboards: DashboardHistorySummary[]
+    currentHistory: DashboardHistory | null
+    selectedSnapshot: VersionSnapshot | null
+    loading: boolean
+    panelOpen: boolean
+  }
+  setVersionPanelOpen: (open: boolean) => void
+  setAllDashboardHistory: (d: DashboardHistorySummary[]) => void
+  setCurrentHistory: (h: DashboardHistory | null) => void
+  setSelectedSnapshot: (s: VersionSnapshot | null) => void
+  setVersionHistoryLoading: (b: boolean) => void
+  fetchAllDashboardHistory: () => Promise<void>
+  loadDashboardHistory: (dashboardId: number) => Promise<void>
 }
 
 const DEFAULT_DB_CONFIG: DbConfig = {
@@ -166,6 +208,10 @@ export const useAppStore = create<AppState>()(
       },
       setPhase1: (p) =>
         set((state) => ({ phase1: { ...state.phase1, ...p } })),
+      erdData: null,
+      erdVisible: false,
+      setErdData: (data) => set({ erdData: data }),
+      setErdVisible: (visible) => set({ erdVisible: visible }),
 
       phase2: {
         queryPlan: null,
@@ -180,14 +226,43 @@ export const useAppStore = create<AppState>()(
         datasetName: '',
         dashboardTitle: '',
         requirements: '',
+        dashboardId: null,
         datasetInfo: null,
         dashboardPlan: null,
         planReady: false,
         dashboardUrl: null,
+        chartIds: [],
         qaReport: null,
       },
       setPhase3: (p) =>
         set((state) => ({ phase3: { ...state.phase3, ...p } })),
+      descriptionGeneration: {
+        loading: false,
+        results: [],
+        done: false,
+        error: null,
+      },
+      setDescriptionGenerationLoading: (loading) =>
+        set((s) => ({ descriptionGeneration: { ...s.descriptionGeneration, loading } })),
+      setDescriptionGenerationResults: (results) =>
+        set((s) => ({
+          descriptionGeneration: {
+            ...s.descriptionGeneration,
+            results,
+            error: null,
+          },
+        })),
+      setDescriptionGenerationDone: (done) =>
+        set((s) => ({ descriptionGeneration: { ...s.descriptionGeneration, done } })),
+      resetDescriptionGeneration: () =>
+        set({
+          descriptionGeneration: {
+            loading: false,
+            results: [],
+            done: false,
+            error: null,
+          },
+        }),
 
       phase3Step: 1 as (1 | 2 | 3),
       editedPlan: null,
@@ -224,6 +299,67 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ csvCanvasCharts: [...s.csvCanvasCharts, chart] })),
       removeCsvCanvasChart: (id) =>
         set((s) => ({ csvCanvasCharts: s.csvCanvasCharts.filter((c) => c.id !== id) })),
+
+      dqReport: null,
+      dqLoading: false,
+      setDqReport: (report) => set({ dqReport: report }),
+      setDqLoading: (loading) => set({ dqLoading: loading }),
+
+      versionHistory: {
+        allDashboards: [],
+        currentHistory: null,
+        selectedSnapshot: null,
+        loading: false,
+        panelOpen: false,
+      },
+      setVersionPanelOpen: (open) =>
+        set((s) => ({ versionHistory: { ...s.versionHistory, panelOpen: open } })),
+      setAllDashboardHistory: (d) =>
+        set((s) => ({ versionHistory: { ...s.versionHistory, allDashboards: d } })),
+      setCurrentHistory: (h) =>
+        set((s) => ({ versionHistory: { ...s.versionHistory, currentHistory: h } })),
+      setSelectedSnapshot: (snapshot) =>
+        set((s) => ({ versionHistory: { ...s.versionHistory, selectedSnapshot: snapshot } })),
+      setVersionHistoryLoading: (loading) =>
+        set((s) => ({ versionHistory: { ...s.versionHistory, loading } })),
+      fetchAllDashboardHistory: async () => {
+        const sessionId = get().sessionId
+        if (!sessionId) return
+        set((s) => ({ versionHistory: { ...s.versionHistory, loading: true } }))
+        try {
+          const res = await getDashboardHistoryList(sessionId)
+          set((s) => ({ versionHistory: { ...s.versionHistory, allDashboards: res.dashboards } }))
+        } catch {
+          set((s) => ({ versionHistory: { ...s.versionHistory, allDashboards: [] } }))
+        } finally {
+          set((s) => ({ versionHistory: { ...s.versionHistory, loading: false } }))
+        }
+      },
+      loadDashboardHistory: async (dashboardId) => {
+        const sessionId = get().sessionId
+        if (!sessionId) return
+        set((s) => ({ versionHistory: { ...s.versionHistory, loading: true } }))
+        try {
+          const history = await getDashboardHistory(sessionId, dashboardId)
+          set((s) => ({
+            versionHistory: {
+              ...s.versionHistory,
+              currentHistory: history,
+              selectedSnapshot: null,
+            },
+          }))
+        } catch {
+          set((s) => ({
+            versionHistory: {
+              ...s.versionHistory,
+              currentHistory: null,
+              selectedSnapshot: null,
+            },
+          }))
+        } finally {
+          set((s) => ({ versionHistory: { ...s.versionHistory, loading: false } }))
+        }
+      },
     }),
     {
       name: 'superset-dashboard-builder',
